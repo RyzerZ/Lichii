@@ -664,8 +664,18 @@ private:
             const char* value = std::getenv("EDEN_NX2_EXACT_PREFLUSH");
             return value == nullptr || value[0] != '0';
         }();
+        // EDEN_NX2_PREFLUSH_DOWNLOADS=0: Preflushable pages are not downloaded at every fence
+        // either; their reads are trapped and flushed one by one again (A/B measurements).
+        static const bool preflush_downloads = [] {
+            const char* value = std::getenv("EDEN_NX2_PREFLUSH_DOWNLOADS");
+            return value == nullptr || value[0] != '0';
+        }();
         if (AsyncBufferDownloads()) {
             uncommitted_gpu_modified_ranges.Add(device_addr, size);
+            return;
+        }
+        if (!preflush_downloads) {
+            ArmReadTraps(device_addr, size);
             return;
         }
         if (!exact) {

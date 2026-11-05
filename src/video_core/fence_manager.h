@@ -347,9 +347,19 @@ private:
                 flushes.committed |= TextureFlushes;
             }
         }
+        // EDEN_NX2_PREFLUSH_EVERY=N: commit buffer downloads at one fence in N that has some. The
+        // GPU writes collected meanwhile merge, so a range rewritten between fences is copied
+        // back once instead of at each (Ocarina of Time: ~700 MB/s at ~4,400 fences/s).
+        static const u32 buffer_commit_period = [] {
+            const char* value = std::getenv("EDEN_NX2_PREFLUSH_EVERY");
+            const unsigned long period = value != nullptr ? std::strtoul(value, nullptr, 10) : 1;
+            return static_cast<u32>(std::clamp<unsigned long>(period, 1, 4096));
+        }();
         {
             std::scoped_lock lock{buffer_cache.mutex};
-            if (buffer_cache.HasUncommittedFlushes()) {
+            if (buffer_cache.HasUncommittedFlushes() &&
+                ++buffer_commit_tick >= buffer_commit_period) {
+                buffer_commit_tick = 0;
                 buffer_cache.CommitAsyncFlushes();
                 flushes.should_flush = true;
                 flushes.committed |= BufferFlushes;
@@ -386,6 +396,7 @@ private:
     std::deque<std::deque<std::function<void()>>> pending_operations;
     std::deque<u8> pending_flushes; ///< Per fence: the caches that committed downloads
     u32 skipped_fences{}; ///< Empty fences skipped since the last one made (GPU thread only)
+    u32 buffer_commit_tick{}; ///< Fences with buffer downloads not yet committed (GPU thread only)
 
     std::mutex guard;
     std::mutex ring_guard;
